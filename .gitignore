@@ -1,0 +1,4 @@
+# 이 저장소는 GitHub Pages 용 index.html 만 올린다 (.env 서비스키 등 나머지는 절대 올리지 않음)
+*
+!index.html
+!.gitignore

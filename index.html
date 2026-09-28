@@ -11,7 +11,18 @@
   body { font-family: system-ui, "Malgun Gothic", sans-serif; }
   .legend { background: #fff; padding: 8px 10px; border-radius: 6px;
             box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 13px; line-height: 1.7; max-height: 80vh; overflow: auto; }
-  .legend h4 { margin: 0 0 4px; font-size: 14px; }
+  .legend h4 { margin: 0; font-size: 14px; }
+  .legend .head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .legend .toggle { margin-left: auto; font: inherit; font-size: 12px; padding: 2px 10px; min-height: 28px;
+                    border: 1px solid #ccc; border-radius: 4px; background: #f6f6f6; cursor: pointer; }
+  .legend.collapsed .body { display: none; }
+  .legend.collapsed .head { margin-bottom: 0; }
+  .capture .legend .toggle { display: none; }
+  @media (max-width: 600px) {
+    .legend { font-size: 12px; line-height: 1.6; max-height: 65vh; max-width: calc(100vw - 70px); padding: 6px 8px; }
+    .legend h4 { font-size: 13px; }
+    .legend .note { display: none; }
+  }
   .legend label, .legend .row { display: flex; align-items: center; gap: 6px; }
   .legend label { cursor: pointer; }
   .legend .name { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 0 4px; border-radius: 3px; flex: 1; }
@@ -52,7 +63,9 @@ const lineW = z => (z = Math.floor(z)) >= 15 ? 5 : z === 14 ? 4 : z === 13 ? 3 :
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture');
 if (CAPTURE) document.body.classList.add('capture');
-const map = L.map('map', { zoomSnap: CAPTURE ? 0 : 1, zoomControl: !CAPTURE });
+// 모바일(좁은 화면): 범례를 접고 시작, 줌은 0.25 단위로 맞춰 옥정 범위를 화면에 꽉 채운다.
+const NARROW = matchMedia('(max-width: 600px)').matches;
+const map = L.map('map', { zoomSnap: CAPTURE ? 0 : NARROW ? 0.25 : 1, zoomControl: !CAPTURE });
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, attribution: '&copy; OpenStreetMap contributors | 데이터: 경기버스정보(GBIS)'
 }).addTo(map);
@@ -301,10 +314,14 @@ function refresh() {
 }
 
 // 범례: 체크박스 = 켜기/끄기, 노선명 = 마우스 올리면 강조, 클릭하면 강조 고정. 오른쪽 = 평일 배차
+let legendCollapse = () => {};
+map.on('click', () => { if (NARROW && !CAPTURE) legendCollapse(); });   // 모바일: 지도 탭하면 범례 접기
 const legend = L.control({ position: 'topright' });
 legend.onAdd = () => {
   const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML = '<h4>양주시 버스 노선 <span class="muted" style="font-weight:400">평일 배차</span></h4>' +
+  div.innerHTML = '<div class="head"><h4>양주시 버스 노선 <span class="muted" style="font-weight:400">평일 배차</span></h4>' +
+    '<button type="button" class="toggle" aria-expanded="true" title="범례 접기/펼치기">접기</button></div>' +
+    '<div class="body">' +
     '<label class="all"><input type="checkbox" id="all" checked>전체</label>' +
     META.routes.map(r => `<div class="row" data-row="${esc(r.routeName)}">` +
       `<input type="checkbox" data-route="${esc(r.routeName)}" checked>` +
@@ -323,7 +340,17 @@ legend.onAdd = () => {
     '<div class="note">같은 길을 지나는 노선은 길 중심에 나란히 붙여 표시<br>' +
     '노선명 클릭: 강조 고정 (지도 클릭으로 해제) · 선 위에 마우스: 강조<br>' +
     '선 클릭: 그 길을 지나는 노선·배차·시간당 운행 수<br>' + META.directionNote +
-    '<br>회색 점 = 여러 노선 공유 정류장</div>';
+    '<br>회색 점 = 여러 노선 공유 정류장</div></div>';
+  // 접기/펼치기: 모바일(좁은 화면)에서는 접힌 채로 시작해 지도를 가리지 않는다. 캡처 화면은 항상 펼침.
+  const btn = div.querySelector('.toggle');
+  const setOpen = open => {
+    div.classList.toggle('collapsed', !open);
+    btn.textContent = open ? '접기' : '범례';
+    btn.setAttribute('aria-expanded', open);
+  };
+  setOpen(CAPTURE || !NARROW);
+  btn.addEventListener('click', () => setOpen(div.classList.contains('collapsed')));
+  legendCollapse = () => setOpen(false);
   L.DomEvent.disableClickPropagation(div);
   L.DomEvent.disableScrollPropagation(div);
   div.addEventListener('change', e => {
@@ -352,10 +379,14 @@ legend.addTo(map);
 // 초기 화면: 옥정동 확대 — 이름에 '옥정'이 들어간 표시 정류장이 모두 들어오는 범위, 오른쪽 범례에 가리지 않게.
 // 선의 투영·스타일 변경은 지도 view 가 정해진 뒤에 해야 하므로 refresh() 는 그 다음에 한다.
 // ?view=all 이면 전체 노선 범위. ?freq=1&day=sun 이면 운행 빈도 보기로 시작.
-const legendW = document.querySelector('.leaflet-top.leaflet-right .legend')?.offsetWidth || 0;
+// 모바일은 범례가 접힌 제목줄뿐이라 옆 여백 대신 위 여백만 둔다.
+const legendEl = document.querySelector('.leaflet-top.leaflet-right .legend');
+const legendW = legendEl?.offsetWidth || 0, legendH = legendEl?.offsetHeight || 0;
 const target = Q.get('view') === 'all' || !META.focus
   ? L.featureGroup(Object.values(routeLines).flat()).getBounds() : L.latLngBounds(META.focus);
-map.fitBounds(target, { paddingTopLeft: [30, 30], paddingBottomRight: [legendW + 30, 30] });
+map.fitBounds(target, NARROW && !CAPTURE
+  ? { paddingTopLeft: [10, legendH + 20], paddingBottomRight: [10, 20] }
+  : { paddingTopLeft: [30, 30], paddingBottomRight: [legendW + 30, 30] });
 if (Q.get('freq')) {
   if (DAYS[Q.get('day')]) { day = Q.get('day'); document.getElementById('day').value = day; }
   document.getElementById('freq').checked = true;
